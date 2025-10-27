@@ -94,10 +94,17 @@ def main():
     # 检查FFmpeg
     if not check_ffmpeg():
         print("⚠️  FFmpeg未安装，可能影响某些视频格式的处理")
-    
-    # 设置环境
-    setup_environment()
-    
+
+    # 询问是否配置摘要功能
+    user_choice = input("是否需要配置summarizer功能？(true/false) [true]: ").strip().lower()
+    summarizer_enabled = user_choice not in {"false", "0", "no", "n"}
+    os.environ["SUMMARIZER_ENABLED"] = "true" if summarizer_enabled else "false"
+
+    if summarizer_enabled:
+        setup_environment()
+    else:
+        print("⏭️ 已选择跳过summarizer功能配置，摘要相关步骤将不会执行。")
+
     print("\n🎉 启动检查完成!")
     print("=" * 50)
     

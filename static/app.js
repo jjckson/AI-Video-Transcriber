@@ -133,6 +133,8 @@ class VideoTranscriber {
         this.downloadTranslationBtn = document.getElementById('downloadTranslation');
         this.downloadSummaryBtn = document.getElementById('downloadSummary');
         this.translationTabBtn = document.getElementById('translationTabBtn');
+        this.summaryTabBtn = document.querySelector('[data-tab="summary"]');
+        this.summaryTabContent = document.getElementById('summaryTab');
         
         // 调试：检查元素是否正确初始化
         console.log('[DEBUG] 🔧 初始化检查:', {
@@ -358,7 +360,7 @@ class VideoTranscriber {
                     this.stopSSE();
                     this.setLoading(false);
                     this.hideProgress();
-                    this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language);
+                    this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language, task.summarizer_enabled !== false);
                 } else if (task.status === 'error') {
                     console.log('[DEBUG] ❌ 任务失败:', task.error);
                     this.stopSmartProgress(); // 停止智能进度模拟
@@ -387,7 +389,7 @@ class VideoTranscriber {
                             this.stopSmartProgress();
                             this.setLoading(false);
                             this.hideProgress();
-                            this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language);
+                            this.showResults(task.script, task.summary, task.video_title, task.translation, task.detected_language, task.summary_language, task.summarizer_enabled !== false);
                             return;
                         }
                     }
@@ -625,7 +627,7 @@ class VideoTranscriber {
         this.progressSection.style.display = 'none';
     }
     
-    showResults(script, summary, videoTitle = null, translation = null, detectedLanguage = null, summaryLanguage = null) {
+    showResults(script, summary, videoTitle = null, translation = null, detectedLanguage = null, summaryLanguage = null, summarizerEnabled = true) {
 
         // 调试日志：检查翻译相关参数
         console.log('[DEBUG] 🔍 showResults参数:', {
@@ -633,17 +635,47 @@ class VideoTranscriber {
             translationLength: translation ? translation.length : 0,
             detectedLanguage,
             summaryLanguage,
-            languagesDifferent: detectedLanguage !== summaryLanguage
+            languagesDifferent: detectedLanguage !== summaryLanguage,
+            summarizerEnabled
         });
 
         // 渲染markdown内容，确保参数不为null
         const safeScript = script || '';
-        const safeSummary = summary || '';
+        const rawSummary = summary || '';
+        const safeSummary = summarizerEnabled ? rawSummary : '';
         const safeTranslation = translation || '';
-        
+
         this.scriptContent.innerHTML = safeScript ? marked.parse(safeScript) : '';
-        this.summaryContent.innerHTML = safeSummary ? marked.parse(safeSummary) : '';
-        
+
+        const summaryAvailable = summarizerEnabled && safeSummary.trim().length > 0;
+        if (summaryAvailable) {
+            this.summaryContent.innerHTML = marked.parse(safeSummary);
+        } else {
+            this.summaryContent.innerHTML = '';
+        }
+
+        if (this.summaryTabBtn) {
+            this.summaryTabBtn.style.display = summaryAvailable ? 'inline-block' : 'none';
+            if (!summaryAvailable) {
+                this.summaryTabBtn.classList.remove('active');
+            }
+        }
+
+        if (this.summaryTabContent) {
+            this.summaryTabContent.style.display = summaryAvailable ? '' : 'none';
+            if (!summaryAvailable) {
+                this.summaryTabContent.classList.remove('active');
+            }
+        }
+
+        if (this.downloadSummaryBtn) {
+            this.downloadSummaryBtn.style.display = summaryAvailable ? 'inline-flex' : 'none';
+        }
+
+        if (!summaryAvailable) {
+            this.switchTab('script');
+        }
+
         // 处理翻译
         const shouldShowTranslation = safeTranslation && detectedLanguage && summaryLanguage && detectedLanguage !== summaryLanguage;
         
