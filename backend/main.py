@@ -46,7 +46,11 @@ TEMP_DIR.mkdir(exist_ok=True)
 # 初始化处理器
 video_processor = VideoProcessor()
 transcriber = Transcriber()
-summarizer = Summarizer()
+# 通过环境变量控制是否启用摘要功能
+SUMMARIZER_ENABLED = os.getenv("SUMMARIZER_ENABLED", "true").strip().lower() not in {"false", "0", "no", "n"}
+summarizer = Summarizer() if SUMMARIZER_ENABLED else None
+if not SUMMARIZER_ENABLED:
+    logger.info("Summarizer 功能已禁用，本次任务将跳过转录优化和摘要生成。")
 translator = Translator()
 
 # 存储任务状态 - 使用文件持久化
@@ -176,7 +180,8 @@ async def process_video(
             "summary": None,
             "error": None,
             "input_identifier": input_identifier, # 保存输入标识用于去重
-            "original_url": original_url # 记录原始URL或文件名
+            "original_url": original_url, # 记录原始URL或文件名
+            "summarizer_enabled": SUMMARIZER_ENABLED
         }
         save_tasks(tasks)
         
@@ -263,17 +268,25 @@ async def process_video_task(task_id: str, video_input_path: str, summary_langua
         except Exception as e:
             logger.error(f"保存原始转录Markdown失败: {e}")
         
-        # 更新状态：优化转录文本
-        tasks[task_id].update({
-            "progress": 55,
-            "message": "正在优化转录文本..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
         # 优化转录文本：修正错别字，按含义分段
-        script = await summarizer.optimize_transcript(raw_script)
-        
+        script = raw_script
+        if SUMMARIZER_ENABLED and summarizer:
+            tasks[task_id].update({
+                "progress": 55,
+                "message": "正在优化转录文本..."
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
+            script = await summarizer.optimize_transcript(raw_script)
+        else:
+            tasks[task_id].update({
+                "progress": 55,
+                "message": "摘要功能已禁用，跳过转录优化。"
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
         # 为转录文本添加标题，并在结尾添加来源链接
         script_with_title = f"# {video_title}\n\n{script}\n\nsource: {original_url}\n"
         
@@ -307,17 +320,29 @@ async def process_video_task(task_id: str, video_input_path: str, summary_langua
         else:
             logger.info(f"不需要翻译: detected_language={detected_language}, summary_language={summary_language}, should_translate={translator.should_translate(detected_language, summary_language) if detected_language else 'N/A'}")
         
-        # 更新状态：生成摘要
-        tasks[task_id].update({
-            "progress": 80,
-            "message": "正在生成摘要..."
-        })
-        save_tasks(tasks)
-        await broadcast_task_update(task_id, tasks[task_id])
-        
-        # 生成摘要
-        summary = await summarizer.summarize(script, summary_language, video_title)
-        summary_with_source = summary + f"\n\nsource: {original_url}\n"
+        # 摘要相关结果占位
+        summary_with_source = None
+        summary_path = None
+
+        if SUMMARIZER_ENABLED and summarizer:
+            # 更新状态：生成摘要
+            tasks[task_id].update({
+                "progress": 80,
+                "message": "正在生成摘要..."
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
+
+            # 生成摘要
+            summary = await summarizer.summarize(script, summary_language, video_title)
+            summary_with_source = summary + f"\n\nsource: {original_url}\n"
+        else:
+            tasks[task_id].update({
+                "progress": 85,
+                "message": "摘要功能已禁用，跳过摘要生成。"
+            })
+            save_tasks(tasks)
+            await broadcast_task_update(task_id, tasks[task_id])
         
         # 保存优化后的转录文本到文件
         script_filename = f"transcript_{task_id}.md"
@@ -337,10 +362,11 @@ async def process_video_task(task_id: str, video_input_path: str, summary_langua
             pass
 
         # 保存摘要到文件（summary_标题_短ID.md）
-        summary_filename = f"summary_{safe_title}_{short_id}.md"
-        summary_path = TEMP_DIR / summary_filename
-        async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
-            await f.write(summary_with_source)
+        if summary_with_source:
+            summary_filename = f"summary_{safe_title}_{short_id}.md"
+            summary_path = TEMP_DIR / summary_filename
+            async with aiofiles.open(summary_path, "w", encoding="utf-8") as f:
+                await f.write(summary_with_source)
         
         # 更新状态：完成
         task_result = {
@@ -350,12 +376,13 @@ async def process_video_task(task_id: str, video_input_path: str, summary_langua
             "video_title": video_title,
             "script": script_with_title,
             "summary": summary_with_source,
-            "script_path": str(script_path),
-            "summary_path": str(summary_path),
+            "script_path": str(script_path) if script_path else None,
+            "summary_path": str(summary_path) if summary_path else None,
             "short_id": short_id,
             "safe_title": safe_title,
             "detected_language": detected_language,
-            "summary_language": summary_language
+            "summary_language": summary_language,
+            "summarizer_enabled": SUMMARIZER_ENABLED
         }
         
         # 如果有翻译，添加翻译信息
